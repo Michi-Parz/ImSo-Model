@@ -1,0 +1,1305 @@
+---
+title: "Final Analysis of Impact Sound Level Data"
+author: "Michael Parzinger"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    number_sections: true
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+
+
+recalculate <- FALSE
+
+realDataAvailable <- TRUE
+
+library(SoundModeling) # https://github.com/Michi-Parz/SoundModeling
+if (realDataAvailable)
+  library(SoundModelingData)
+library(rstan)
+library(stringr)
+
+library(PupillometryR)
+library(ggridges)
+
+data("ntp_data")
+
+ntp_share <- ntp_data
+```
+
+
+# Informations for own use
+
+
+Please note: If *recalculate* is set to TRUE, it will take longer, but this is necessary for the first pass!
+
+
+*realDataAvailable* TRUE is only possible if the R package *SoundModelingData* has been installed, which contains the actual data. However, this package is not publicly available!
+
+
+
+
+# ISO 12354-2 Modell
+
+Annahmen:
+
+$\rho = 2300$ kg/$m^3$, $t = 0.2$ m, $f_0=80$ Hz, $f_\mathrm{ref}=1000$ Hz, $q=35$, $\eta_\mathrm{int}=0.01$, C=$0.5$, $c_\mathrm{L}=3500$ m/s, und Volumen $V= 50$
+
+Außerdem hier der dynamische maximale Abstrahlgrad, weil dadurch der Verlauf natürlicher. (Andere Decke deshalb vertretbar denke ich)
+
+```{r}
+testValuesFull <- impact_sound_standard(thickness = 0.2,
+                                       reduction_factor = 35,
+                                      resonance_freq = 80,
+                                      volume = 50,
+                                      freq = freq,
+                                      max_rl_type = "dynamic")
+
+lnCompare <- impact_sound_raw(thickness = 0.2, density = 2300, volume=50,
+                         offset = 155, freq = freq)
+
+
+lnTestDF <- data.frame("fpHz" = freq,
+             "IMso" = testValuesFull, "Ln" = lnCompare)
+```
+
+```{r}
+func_1b <- function(f, b0,b1, b2, bp){
+  b0+b1*log(f) + b2 * pmax(log(f/bp), 0)
+}
+
+
+NLMsegTheo <- nlsLM(IMso ~ func_1b(fpHz, b0, b1, b2, bp),
+      data = lnTestDF, start = c(b0=53 ,b1 =1.6 ,b2 = 35, bp =80))
+
+summary(NLMsegTheo)
+
+
+segRegCoeff <- coefficients(NLMsegTheo)
+```
+
+```{r}
+gg_basic(
+  lnTestDF,
+  aes(y = IMso, x = fpHz, color = "L'n Model"),
+  ymin = 0, ymax = 70,
+  isl = T, lab = F
+)+geom_line() + geom_point()+
+  geom_line(aes(y = func_1b(fpHz,
+                            segRegCoeff[1],
+                            segRegCoeff[2],
+                            segRegCoeff[3],
+                            segRegCoeff[4]),
+                color = "Regression"))+
+  labs(color = "")+theme(
+    legend.position = c(0.4, 0.2),
+    legend.justification = c(0.5, 0.5),
+    legend.background = element_rect(fill = "transparent"),
+    legend.spacing.y = unit(-0.7, "cm"),
+    panel.grid.major = element_line(linewidth = 1))+
+  geom_line(aes(y = lnCompare, color = "Ln Model"))
+
+
+
+```
+
+
+
+```{r}
+gg_basic(
+  lnTestDF,
+  aes(y = IMso, x = fpHz, color = "L'n Model"),
+  ymin = 0, ymax = 70,
+  isl = T, lab = F
+)+geom_line() + geom_point()+
+  geom_line(aes(y = func_1b(fpHz,
+                            segRegCoeff[1],
+                            segRegCoeff[2],
+                            segRegCoeff[3],
+                            segRegCoeff[4]),
+                color = "Regression"))+
+  labs(color = "")+theme(
+    legend.position = c(0.4, 0.2),
+    legend.justification = c(0.5, 0.5),
+    legend.background = element_rect(fill = "transparent"),
+    legend.spacing.y = unit(-0.7, "cm"),
+    panel.grid.major = element_line(linewidth = 1))
+```
+
+
+
+# Daten Anpassung
+
+```{r}
+
+ntp_data$ID <- 1:nrow(ntp_data)
+
+ntp_data <- ntp_data[!ntp_data$seltsam_mbbm,]
+
+ntp_original <- ntp_data
+
+lin_adjust <- apply(
+  ntp_data[,13:33],
+  1, linear_continuation, orientation = 3
+)
+
+
+ntp_o_long <- tidyr::pivot_longer(
+  ntp_data,
+  cols = 13:33,
+  names_to = "fpHz",
+  values_to = "NTP"
+)
+
+
+#ntp_between <- ntp_data
+#ntp_between[,13:33] <- (ntp_data[,13:33] + t(lin_adjust))/2
+
+ntp_data[,13:33] <- t(lin_adjust)
+
+
+# ntp_between <- tidyr::pivot_longer(
+#   ntp_between,
+#   cols = 13:33,
+#   names_to = "fpHz",
+#   values_to = "NTP"
+# )
+
+
+ntp_long <- tidyr::pivot_longer(
+  ntp_data,
+  cols = 13:33,
+  names_to = "fpHz",
+  values_to = "NTP"
+)
+
+ntp_o_long <- ntp_o_long[
+  !ntp_o_long$seltsam_mbbm,
+  c("ID", "fpHz", "NTP", "E_VolA")
+]
+
+
+# ntp_between <- ntp_between[
+#   !ntp_long$seltsam_mbbm,
+#   c("ID", "fpHz", "NTP", "E_VolA")
+# ]
+
+ntp_long <- ntp_long[
+  !ntp_long$seltsam_mbbm,
+  c("ID", "fpHz", "NTP", "E_VolA")
+]
+
+
+
+
+
+
+ntp_long$fpHz <- ntp_o_long$fpHz <- rep(freq, 142)
+
+
+ntp_between <- ntp_long
+ntp_between$NTP <- (ntp_long$NTP + ntp_o_long$NTP)/2
+
+
+```
+
+```{r}
+gg_o <- gg_basic(ntp_o_long, aes(x = fpHz, y = NTP, group = ID),
+         ymin = -20, ymax = 70, isl = T, lab = F)+
+  geom_line(alpha = 0.5)+
+  labs(title = "Original")
+
+gg_a <- gg_basic(ntp_long, aes(x = fpHz, y = NTP, group = ID),
+         ymin = -20, ymax = 70, isl = T, lab = F)+
+  geom_line(alpha = 0.5)+
+  labs(title = "Adjusted")
+
+
+gg_bonus <- gg_basic(ntp_between, aes(x = fpHz, y = NTP, group = ID),
+         ymin = -20, ymax = 70, isl = T, lab = F)+
+  geom_line(alpha = 0.5)+
+  labs(title = "Mean")
+
+
+ggarrange(gg_o, gg_a)
+
+ggarrange(gg_o, gg_a, gg_bonus, ncol = 3)
+
+```
+
+# Einfluss Daten Anpassung auf Bruchpunkt
+
+Bruchpunkt Modell wird mit Original Daten und mit einem Datensatz bis inlusive 2500 Hz wiederholt. Die Frage ist dann wie stark sich die Parameter von den angepassten Datensatz unterscheiden.
+
+```{r}
+apply(ntp_original[,13:33]<=10, 2, sum)
+```
+
+Warum 2500 Hz? Bis 1600 Hz sind alle Werte größer als 10 dB. Für 2000 Hz sind nur zwei Messungen und bei 2500 Hz nur 15 Messungen betroffen. Zu 3150 Hz sind es hingegen schon 57 Messungen also über $40\ \%$.
+
+```{r}
+func_1b <- function(f, b0,b1, b2, bp){
+  b0+b1*log10(f) + b2 * pmax(log(f/bp), 0)
+}
+
+func_2b <- function(f, b0,b1, b2, b3, bp, bp_diff){
+  bp2 <- bp + bp_diff
+  b0+b1*log10(f) + b2 * pmax(log10(f/bp), 0) + b3 * pmax(log10(f/bp2), 0)
+}
+
+```
+
+```{r}
+
+starvals <- coefficients(NLMsegTheo)
+
+mod_adata_1b <- nlsLMcov(NTP~func_1b(fpHz, b0,b1,b2, bp), ntp_long,
+                   start = starvals,
+             cov_type = "tvAR",
+             maxlag = 1 
+             )
+
+mod_odata_1b <- nlsLMcov(NTP~func_1b(fpHz, b0,b1,b2, bp), ntp_o_long,
+                   start = starvals,
+             cov_type = "tvAR",
+             maxlag = 1 
+             )
+
+mod_mdata_1b <- nlsLMcov(NTP~func_1b(fpHz, b0,b1,b2, bp), ntp_between,
+                   start = starvals,
+             cov_type = "tvAR",
+             maxlag = 1 
+             )
+
+
+mod_rdata_1b <- nlsLMcov(NTP~func_1b(fpHz, b0,b1,b2, bp),
+                         ntp_o_long[ntp_o_long$fpHz <= 2500,],
+                   start = starvals,
+             cov_type = "tvAR",
+             maxlag = 1, curve_len = 18
+             )
+
+
+
+data_influence_list <- list(
+  "Lin. continuation" = mod_adata_1b,
+  "Original" = mod_odata_1b,
+  "Reduced" = mod_rdata_1b,
+  "Averaged" = mod_mdata_1b
+)
+
+
+
+vgl_data <- data.frame(
+  "fpHz" = c(freq,freq,
+             #freq,
+             freq[1:18]),
+  "Fit" = c(mod_adata_1b$fitted[1:21],
+    mod_odata_1b$fitted[1:21],
+    #mod_mdata_1b$fitted[1:21],
+    mod_rdata_1b$fitted[1:18]),
+  "Data" = c(
+    rep(c("Lin. continuation", "Original"
+          #,"Average"
+          ), each = 21),
+    rep("Reduced", 18)
+  )
+)
+
+gg_basic(vgl_data, aes(x = fpHz, y = Fit, color = Data, group = Data),
+         ymin = 0, ymax = 60, isl = T)+
+  geom_line()+
+  labs(color = "Data basis")+
+  theme(
+    legend.position = c(0.4, 0.2),
+    legend.justification = c(0.5, 0.5),
+    legend.background = element_rect(fill = "transparent"),
+    legend.spacing.y = unit(-0.7, "cm"),
+    panel.grid.major = element_line(linewidth = 1))
+
+
+```
+
+```{r}
+
+lapply(data_influence_list, summary)
+
+sapply(data_influence_list, coefficients)
+```
+
+
+# LOO Vergleich segmentierte Regression
+
+```{r}
+
+loolist <- readRDS("Saves/LOOlist_Fix")
+
+
+loo::loo_compare(loolist)
+
+loo_df <- data.frame(loo::loo_compare(loolist))[,1:2]
+
+rnames <- row.names(loo_df)
+
+loo_df <- cbind("K" = stringr::str_sub(rnames, 2,2),
+                "L" = stringr::str_sub(rnames, 4,4),
+                  loo_df)
+
+row.names(loo_df) <- NULL
+
+knitr::kable(loo_df, digits = c(0,0,1,1))
+
+```
+
+Am besen ist das TVAR(3) Modell mit drei Segementen
+
+
+# Modell mit zwei Bruchpunkten
+
+
+$$
+ y(f) = \beta_0 + \beta_1 \ln(f) + \beta_{2} \max(\ln(f/\tau_1),0) + \beta_{3} \max(\ln(f/\tau_2),0)
+$$
+
+
+
+
+## Prioris
+
+
+
+-   $\beta|\Sigma,X_\tau\ \sim \mathcal{N}_4(b, (X_\tau\Sigma^{-1}X_\tau)^{-1})$
+
+-   $b=(38.6,4.88,-18.8,-18.8)^T$
+
+-   $X_\tau$: Designmatrix sodass $E[y_i|\beta,\tau] = X_\tau\beta$
+
+-   $\delta_1 \sim \mathrm{Exp}(1/0.36)$
+
+-   $\delta_2 \sim \mathrm{Exp}(1/914)$
+
+-   $\tau_1 = 50 + \delta_1$
+
+-   $\tau_2 = \tau_1+\delta_2 $
+
+
+
+```{r}
+
+bp1 <- 86
+bp2 <- 1000
+
+
+x1 <- rep(1, 21)
+x2 <- log(freq)
+x3 <- ifelse(freq > bp1, 1,0) * log(freq/bp1)
+x4 <- ifelse(freq > bp2, 1,0) * log(freq/bp2)
+
+X <- cbind(x1,x2,x3,x4)
+
+
+
+
+```
+
+
+
+
+
+## Diagnose
+
+
+
+
+```{r}
+model3seg <- readRDS("Saves/ImSo_Fix_2breaks_tvAR_3")
+
+fit3seg <- rstan::extract(model3seg)
+
+
+
+
+set.seed(260326)
+y_rep <- array(dim = c(4000,142, 21))
+
+for (i in 1:4000) {
+  y_rep[i,,] <- mvtnorm::rmvnorm(142, fit3seg$mu[i,], fit3seg$cov_mat[i,,])
+}
+
+fit3seg$y_rep <- y_rep
+
+```
+
+
+
+```{r}
+# n_eff
+summary(head(summary(model3seg)$summary[,"n_eff"], 6+57+21))
+# Rhat
+summary(head(summary(model3seg)$summary[,"Rhat"], 6+57+21))
+
+
+check_hmc_diagnostics(model3seg)
+
+```
+
+
+
+
+
+## Modellkurven
+
+
+
+
+```{r}
+
+ntp_fit <- data.frame(
+    "ID" = -1,
+    "fpHz" = freq,
+    "NTP" = apply(fit3seg$mu, 2, mean),
+    "Type" = "Model: K=3"
+  )
+
+
+
+
+
+```
+
+
+
+
+
+
+```{r}
+    # geom_line(
+    #     mapping = aes(x = fpHz, y = NTP),
+    #     data = ntp_mean, size = 0.8
+    # )+
+
+gg_basic(ntp_long,
+         ymin = -20, ymax = 70,
+         isl = T, lab = F)+
+    geom_line(aes(x = fpHz, y = NTP, group = ID), alpha = 0.1)+
+  geom_line(
+        mapping = aes(x = fpHz, y = NTP),
+        data = ntp_fit, linewidth = 0.8, color = "red"
+    )
+
+
+```
+
+
+
+## Residuen
+
+
+
+
+```{r}
+
+
+exp_white_res <- data.frame(
+  "fpHz" = rep(freq,142),
+  "Res" = c(t(apply(fit3seg$st_resid, 2:3, mean))),
+  "Fit" = rep(apply(fit3seg$mu,2,mean), 142)
+)
+
+
+resfreq <- ggWhiteRes(exp_white_res, aes(x = as.factor(fpHz), y = Res),
+                      txtsize = 3, tikz = T)+
+  labs(x = expression(paste("Frequency ",
+                                                        italic(" f"), " / Hz")))+
+  theme(axis.text.x = element_text(angle =40, hjust = 1))
+    # scale_x_discrete( minor_breaks = c(freq,6300,8000,10000),
+    #                   breaks = c(63,125,250,500,1000,2000,4000,8000),
+    #                   labels = c(63,125,250,500,1000,2000,4000,8000),
+    # )
+
+resfreq
+
+
+```
+
+
+
+
+
+Auffällige Beobachtung
+
+
+```{r}
+
+outlier <- which.min(exp_white_res$Res)
+outlierID <- ntp_long[outlier,]$ID
+
+
+ntp_long$outlier <- ifelse(ntp_long$ID == outlierID, T, F)
+
+
+whiteResOutlier <- gg_basic(ntp_long, aes(x = fpHz, y = NTP, group = ID, color = outlier),
+         ymin = -20, ymax = 70, isl = T, lab = F)+
+  geom_line(aes(alpha = outlier))+
+  scale_color_manual(values = c("darkgrey", "black"))+
+  scale_alpha_manual(values = c(0.25,1))+
+  theme(legend.position = "none")+
+  geom_vline(xintercept = c(400,500,630), linetype = "dotted")
+
+
+whiteResOutlier
+
+```
+
+
+## Residuen Chisq
+
+```{r}
+
+
+
+chi_curve <- apply(fit3seg$st_resid, 1:2, \(x){
+  sum(x^2)
+})
+
+chi_freq <- apply(fit3seg$st_resid, c(1,3), \(x){
+  sum(x^2)
+})
+
+chiWallQuantiles <- apply(chi_curve, 2,
+                         quantile,
+                         probs = c(0.5, 0.95, 0.99,1))
+
+chiFreqQuantiles <- apply(chi_freq, 2,
+                         quantile,
+                         probs = c(0.5, 0.95, 0.99,1))
+
+
+```
+
+```{r}
+
+chiCurveDf <- data.frame(
+  "Wall" = rep(1:142, each = 4),
+  "ChiSQ" = c(chiWallQuantiles)
+)
+chiFreqDf <- data.frame(
+  "Freq" = rep(freq, each = 4),
+  "ChiSQ" = c(chiFreqQuantiles)
+)
+
+
+```
+
+
+```{r}
+ggplot(chiCurveDf)+
+  aes(x = Wall, y = ChiSQ)+
+  geom_point()+
+  geom_hline(
+     yintercept = qchisq(c(0.5,0.95,0.99),21),
+     color = "blue"
+  )+
+  geom_hline(
+     yintercept = max(rchisq(4000, 21)),
+     color = "lightblue"
+  )
+
+
+gg_basic(chiFreqDf,ymin = 0, ymax = 200, sound = F)+
+  aes(x = Freq, y = ChiSQ)+
+  geom_point()+
+  geom_hline(
+     yintercept = qchisq(c(0.5,0.95,0.99),142),
+     color = "blue"
+  )+
+  geom_hline(
+     yintercept = max(rchisq(4000, 142)),
+     color = "lightblue"
+  )
+
+```
+
+
+
+
+
+## Betas
+
+```{r}
+
+fix_betas <- data.frame(fit3seg$fe_betas)
+names(fix_betas) <- paste("b", 0:3, sep = "")
+
+
+
+gg_kernel <- ggplot(fix_betas)
+
+
+# b anstatt bquote(Intercept~beta[0]), weil tikz
+
+ggb0 <- gg_kernel+
+  aes(y=b0, x = "")+
+  geom_flat_violin() +
+  geom_boxplot()+
+  labs(y = "dB", x = "Intercept b0")
+  
+ggb1 <- gg_kernel+
+  aes(y=b1, x = "")+
+  geom_flat_violin() +
+  geom_boxplot()+
+  labs(y = "dB", x = "Slope b1")
+
+ggb2 <- gg_kernel+
+  aes(y=b2, x = "")+
+  geom_flat_violin() +
+  geom_boxplot()+
+  labs(y = "dB", x = "Slope change b2")
+
+ggb3 <- gg_kernel+
+  aes(y=b3, x = "")+
+  geom_flat_violin() +
+  geom_boxplot()+
+  labs(y = "dB", x = "Slope change b3")
+
+ggarrange(ggb0,ggb1, ggb2, ggb3)
+
+
+```
+
+```{r}
+
+fix_tau <- data.frame(fit3seg$b_points)
+
+names(fix_tau) <- c("tau1", "tau2")
+
+
+
+
+gg_kernel <- ggplot(fix_tau)
+
+
+# b anstatt bquote(Intercept~beta[0]), weil tikz
+
+ggt1 <- gg_kernel+
+  aes(y=tau1, x = "")+
+  geom_flat_violin() +
+  geom_boxplot()+
+  labs(y = "Hz", x = "Breakpoint t1")
+  
+ggt2 <- gg_kernel+
+  aes(y=tau2, x = "")+
+  geom_flat_violin() +
+  geom_boxplot()+
+  labs(y = "Hz", x = "Breakpoint t2")
+
+
+
+ggarrange(ggt1,ggt2)
+
+
+```
+
+
+
+
+
+## Bedingte Standardabweichung
+
+```{r}
+quantiles <- c(0.025, 0.5, 0.975)
+```
+
+
+```{r}
+
+
+# gibt auch fit3seg$unconditional_st_dev
+
+
+stdev_bayes <- fit3seg$st_dev
+
+stdev_b_quant <- apply(stdev_bayes, 2, quantile, probs = quantiles)
+
+stdev_b_df <- data.frame(
+  t(stdev_b_quant),
+  fpHz = freq,
+  Method = "Bayesian"
+)
+names(stdev_b_df)[1:3] <- paste("q", c(2.5,50,97.5), sep = "")
+
+
+# Kombiniert
+stdev_df <- stdev_b_df
+```
+
+
+```{r}
+
+ggplot(stdev_df)+
+  aes(x = fpHz)+
+  geom_line(aes(y = q50))+
+  geom_ribbon(aes(ymin = q2.5, ymax = q97.5), alpha = 1/4)+
+  scale_x_continuous(trans = log2_trans(),
+                       minor_breaks = c(freq,6300,8000,10000),
+                       breaks = c(63,125,250,500,1000,2000,4000,8000),
+                       labels = c(63,125,250,500,1000,2000,4000,8000),
+    )+
+  labs(y = "Conditional standard deviation",
+       x = "Frequency f / Hz")+
+  theme(legend.position = "bottom")
+
+
+```
+
+## Marginale Standardabweichung
+
+```{r}
+quantiles <- c(0.025, 0.5, 0.975)
+```
+
+
+```{r}
+
+
+# gibt auch fit3seg$unconditional_st_dev
+
+
+stdev_bayes <- fit3seg$unconditional_st_dev
+
+stdev_b_quant <- apply(stdev_bayes, 2, quantile, probs = quantiles)
+
+stdev_b_df <- data.frame(
+  t(stdev_b_quant),
+  fpHz = freq,
+  Method = "Bayesian"
+)
+names(stdev_b_df)[1:3] <- paste("q", c(2.5,50,97.5), sep = "")
+
+
+# Kombiniert
+stdev_df <- stdev_b_df
+```
+
+
+```{r}
+
+ggplot(stdev_df)+
+  aes(x = fpHz)+
+  geom_line(aes(y = q50))+
+  geom_ribbon(aes(ymin = q2.5, ymax = q97.5), alpha = 1/4)+
+  scale_x_continuous(trans = log2_trans(),
+                       minor_breaks = c(freq,6300,8000,10000),
+                       breaks = c(63,125,250,500,1000,2000,4000,8000),
+                       labels = c(63,125,250,500,1000,2000,4000,8000),
+    )+
+  labs(y = "Marginal standard deviation / dB",
+       x = "Frequency f / Hz")+
+  theme(legend.position = "bottom")
+
+
+```
+
+## AR Coefficients
+
+Hmh wie stelle ich die am besten dar... sind ja 57...
+
+
+```{r}
+
+
+# Bayes
+arcoeff_bayes <- fit3seg$shift_coeff
+
+
+b_quant <- apply(arcoeff_bayes, 2, quantile, probs = quantiles)
+
+ar_b_df <- data.frame(
+  t(b_quant),
+  fpHz = c(freq[-1],freq[-c(1:2)],freq[-c(1:3)]),
+  Lag = c(rep(1,20), rep(2,19), rep(3,18))
+)
+names(ar_b_df)[1:3] <- paste("q", quantiles*100, sep = "")
+
+
+# Kombiniert
+ar_df <- ar_b_df
+```
+
+
+```{r}
+# 
+ggplot(ar_df)+
+  aes(x = fpHz, group = Lag,
+      fill = as.factor(Lag),
+      color = as.factor(Lag))+
+  geom_line(aes(y = q50))+
+  geom_ribbon(aes(ymin = q2.5, ymax = q97.5), alpha = 1/4)+
+  scale_x_continuous(trans = log2_trans(),
+                       minor_breaks = c(freq,6300,8000,10000),
+                       breaks = c(63,125,250,500,1000,2000,4000,8000),
+                       labels = c(63,125,250,500,1000,2000,4000,8000),
+    )+
+  labs(y = "AR coefficient",
+       x = "Frequency f / Hz",
+       fill = "Lag", color = "Lag")+
+  theme(legend.position = "bottom")
+
+
+```
+
+## Korrelation
+
+
+```{r}
+mean_corrmat <- apply(fit3seg$corr_mat, 2:3, mean)
+
+row.names(mean_corrmat) <- colnames(mean_corrmat) <- paste(freq, "Hz")
+
+
+corrplot::corrplot(mean_corrmat, "color", tl.col = "black")
+
+```
+
+
+
+
+## Sample qq
+
+
+
+```{r}
+
+chiWall <- apply(fit3seg$st_resid, 1:2, \(x){sum(x^2)})
+chiFreq <- apply(fit3seg$st_resid, c(1,3), \(x){sum(x^2)})
+
+
+
+```
+
+
+```{r}
+
+MCMCchiWall <- MCMCqqPlotsChi(chiWall, 21, 100)
+MCMCchiFreq <- MCMCqqPlotsChi(chiFreq, 142, 100)
+
+```
+
+
+
+
+
+```{r}
+
+
+
+ggplot(MCMCchiWall)+
+  aes(x= TheoQuantiles,group = Index)+
+  geom_line(aes(y= EmpQuantiles), alpha = 1/3, col = "lightblue")+
+  geom_line(aes(y = TheoQuantiles))+
+  geom_line(aes(y = TheoQuantiles + 2*StDevQuantile), linetype = "dotted")+
+  geom_line(aes(y = TheoQuantiles - 2*StDevQuantile), linetype = "dotted")
+
+
+ggplot(MCMCchiFreq)+
+  aes(x= TheoQuantiles,group = Index)+
+  geom_line(aes(y= EmpQuantiles), alpha = 1/3, col = "lightblue")+
+  geom_line(aes(y = TheoQuantiles))+
+  geom_line(aes(y = TheoQuantiles + 2*StDevQuantile), linetype = "dotted")+
+  geom_line(aes(y = TheoQuantiles - 2*StDevQuantile), linetype = "dotted")
+
+
+```
+
+## PPC One-Third Ocatave Band
+
+
+```{r}
+
+alphas <- c(0.5,0.05,0.01)
+
+yRepQ <- apply(fit3seg$y_rep, 2:3, quantile,
+               probs = c(alphas/2, 1-alphas/2))
+
+yRepQdf <- data.frame(t(data.frame(yRepQ)))
+
+names(yRepQdf) <- c(
+  paste("L", 1:length(alphas), sep = ""),
+  paste("U", 1:length(alphas), sep = "")
+)
+
+
+ppcDF <- cbind(
+  ntp_long[order(ntp_long$fpHz),], yRepQdf
+)
+
+
+```
+
+
+
+```{r}
+# gg_basic(ppcDF, aes(x = fpHz, group = ID, y = NTP),
+#          ymin = -30, ymax = 80)+
+#   geom_line(aes(color = "Data"))+
+#   geom_ribbon(aes(ymin = L3, ymax = U3, color = "99 p"),
+#               alpha = 0.01, fill = NA)+
+#     geom_ribbon(aes(ymin = L2, ymax = U2, color = "95 p"),
+#                 alpha = 0.01, fill = NA)+
+#     geom_ribbon(aes(ymin = L1, ymax = U1, color = "50 p"),
+#                 alpha = 0.01, fill = NA)+
+#   scale_color_manual(values = c("green", "blue", "orange", "black"))+
+#   #scale_fill_manual(values = c("lightgreen","lightblue","grey"))+
+#     labs(color = "", fill = "PPC region", y = "Observation")+
+#     theme(legend.position = "bottom")
+```
+
+```{r}
+ppcFreq <- gg_basic(ppcDF, aes(x = fpHz, group = ID, y = NTP),
+         ymin = -30, ymax = 80, isl = TRUE, lab = TRUE)+
+  geom_line(aes(color = "Data"))+
+  geom_line(aes(y = L3, color = "99 p"), alpha = 0.1)+
+  geom_line(aes(y = U3, color = "99 p"), alpha = 0.1)+
+  geom_line(aes(y = L2, color = "95 p"), alpha = 0.1)+
+  geom_line(aes(y = U2, color = "95 p"), alpha = 0.1)+
+  geom_line(aes(y = L1, color = "50 p"), alpha = 0.1)+
+  geom_line(aes(y = U1, color = "50 p"), alpha = 0.1)+
+  scale_color_manual(
+    values = c("green", "blue", "orange", "black"),
+    guide = guide_legend(override.aes = list(alpha = 1)))+
+  #scale_fill_manual(values = c("lightgreen","lightblue","grey"))+
+    labs(color = "Predictive interval")
+    #theme(legend.position = "bottom")
+
+ppcFreq
+
+```
+
+
+
+```{r}
+mat1 <- OutOfRange(ppcDF, "NTP", "L1", "U1", result = "matrix")
+mat2 <- OutOfRange(ppcDF, "NTP", "L2", "U2", result = "matrix")
+mat3 <- OutOfRange(ppcDF, "NTP", "L3", "U3", result = "matrix")
+
+
+expected <- 142*alphas
+
+
+oorBias1 <- apply(mat1, 2, sum) - expected[1]
+oorBias2 <- apply(mat2, 2, sum) - expected[2]
+oorBias3 <- apply(mat3, 2, sum) - expected[3]
+
+oorBias1sd <- oorBias1/sqrt(142*alphas[1]*(1-alphas[1]))
+oorBias2sd <- oorBias2/sqrt(142*alphas[2]*(1-alphas[2]))
+oorBias3sd <- oorBias3/sqrt(142*alphas[3]*(1-alphas[3]))
+
+
+prfct <- function(ex, diff, prop){
+   (1-pbinom(ex+diff,142,prop)+ pbinom(ex-diff,142,prop))
+}
+
+
+prob1 <- prfct(expected[1], diff = abs(oorBias1), alphas[1])
+prob2 <- prfct(expected[2], diff = abs(oorBias2), alphas[2])
+prob3 <- prfct(expected[3], diff = abs(oorBias3), alphas[3])
+
+
+
+oorDf <- data.frame(
+  "fpHz" = rep(freq, 3),
+  "OORbias" = c(oorBias1,oorBias2,oorBias3),
+  "OORbiasSd" = c(oorBias1sd,oorBias2sd,oorBias3sd),
+  "alpha" = paste(rep(1-alphas, each = 21), "p"),
+  "probs" = c(prob1,prob2,prob3)
+)
+
+
+
+
+
+ggplot(oorDf)+
+  aes(x = fpHz, y = OORbias, color = alpha)+
+  geom_point()+
+  geom_line()+
+  scale_x_continuous(trans = log2_trans(),
+                       minor_breaks = c(freq,6300,8000,10000),
+                       breaks = c(63,125,250,500,1000,2000,4000,8000),
+                       labels = c(63,125,250,500,1000,2000,4000,8000),
+    )+
+  scale_color_manual(
+    values = c("green", "blue", "orange"),
+    breaks = c("0.5 p", "0.95 p", "0.99 p"))+
+  labs(y = "OOR - Expected",
+       x = expression(paste("Frequency ",
+                             italic(" f"), " / Hz")),
+       color = "Predictive interval")+
+  theme(legend.position = "bottom")
+
+
+ppcFreqSt <- ggplot(oorDf)+
+  aes(x = fpHz, y = OORbiasSd, color = alpha)+
+  geom_point()+
+  geom_line()+
+  scale_x_continuous(trans = log2_trans(),
+                       minor_breaks = c(freq,6300,8000,10000),
+                       breaks = c(63,125,250,500,1000,2000,4000,8000),
+                       labels = c(63,125,250,500,1000,2000,4000,8000),
+    )+
+  scale_y_continuous(breaks = -3:3)+
+  scale_color_manual(
+    values = c("green", "blue", "orange"),
+    breaks = c("0.5 p", "0.95 p", "0.99 p"))+
+  labs(y = "(OOR - Expected) / Standard deviation",
+       x = expression(paste("Frequency ",
+                             italic(" f"), " / Hz")),
+       color = "Predictive interval  ")+
+  theme(legend.position = "bottom")+
+  coord_cartesian(ylim = c(-3.1,3.1))
+
+ppcFreqSt
+
+ppcFreqBinom <- ggplot(oorDf)+
+  aes(x = fpHz, y = probs, color = alpha)+
+  geom_point()+
+  geom_line(linetype = "dotted")+
+  scale_x_continuous(trans = log2_trans(),
+                       minor_breaks = c(freq,6300,8000,10000),
+                       breaks = c(63,125,250,500,1000,2000,4000,8000),
+                       labels = c(63,125,250,500,1000,2000,4000,8000),
+    )+
+  scale_color_manual(
+    values = c("green", "blue", "orange"),
+    breaks = c("0.5 p", "0.95 p", "0.99 p"))+
+  labs(y = "P(|Binomial - Expected| >= |OOR - Expected|)",
+       x = expression(paste("Frequency ",
+                             italic(" f"), " / Hz")),
+       color = "Predictive interval")+
+  theme(legend.position = "bottom")
+
+
+ppcFreqBinom
+
+```
+
+
+
+```{r}
+
+oor <- c()
+
+oor[1] <- OutOfRange(ppcDF, "NTP", "L1", "U1", "sum")
+oor[2] <- OutOfRange(ppcDF, "NTP", "L2", "U2", "sum")
+oor[3] <- OutOfRange(ppcDF, "NTP", "L3", "U3", "sum")
+
+
+data.frame(
+  "Expected" = alphas*21*142,
+  "Out of range" = oor
+)
+
+
+
+```
+
+
+
+
+
+## PPC Whiteining TVAR Mahalanobis 
+
+
+```{r}
+
+if (recalculate) {
+  PPCwhiteSample <- apply(
+      fit3seg$y_rep,
+      1,
+      whiteningTVAR,
+      maxlag = 3
+  )
+
+  PPCwhiteSample <- t(PPCwhiteSample)
+  saveRDS(PPCwhiteSample, file = "Saves/PPCwhite")
+}
+
+
+
+PPCwhiteSample <- readRDS("Saves/PPCwhite")
+
+
+
+```
+
+
+```{r}
+ntp_datamat <- matrix(ntp_long$NTP, nrow = 142,byrow = T)
+
+ntp_datawhite <- whiteningTVAR(ntp_datamat, 3)
+
+```
+
+
+```{r}
+
+
+alphas <- c(0.5,0.05,0.01)
+
+sim_quant <- apply(
+  PPCwhiteSample, 2, quantile, probs = c(alphas/2, 1-alphas/2)
+)
+
+sim_quant <- data.frame(t(sim_quant))
+names(sim_quant) <- c(
+  paste("L", 1:length(alphas), sep = ""),
+  paste("U", 1:length(alphas), sep = "")
+)
+
+
+own_ribbon <- data.frame(
+  Ind = 1:142,
+  ydata = ntp_datawhite,
+  sim_mean = apply(PPCwhiteSample, 2, mean),
+  sim_quant
+)
+
+
+basis <- ggplot(own_ribbon)+
+    aes(x = Ind)+
+    geom_ribbon(aes(ymin = L3, ymax = U3, fill = "99 p"), alpha = 0.1)+
+    geom_ribbon(aes(ymin = L2, ymax = U2, fill = "95 p"), alpha = 0.2)+
+    geom_ribbon(aes(ymin = L1, ymax = U1, fill = "50 p"), alpha = 0.3)+
+    geom_line(aes(y = sim_mean, color = "PPC mean"))
+
+
+PPCwhite <- basis +
+    geom_point(aes(y = ydata, color = "Data"))+
+    geom_line(aes(y= ydata, color = "Data"))+
+    scale_fill_manual(values = rep("black", 3))+
+    scale_color_manual(values = c("blue", "black"))+
+    labs(color = "", fill = "Predictive interval",
+         x = "Ceiling", y = "Squared mahalanobis")+
+    theme(legend.position = "bottom")+
+  scale_x_continuous(breaks = seq(10,142,10))
+
+PPCwhite
+
+
+```
+
+
+```{r}
+
+
+whichOOR3 <- !(own_ribbon$ydata >=own_ribbon$L3 & own_ribbon$ydata <=own_ribbon$U3)
+
+
+inrangeWhite <- c()
+
+inrangeWhite[1] <- sum(own_ribbon$ydata >=own_ribbon$L1 & own_ribbon$ydata <=own_ribbon$U1)
+inrangeWhite[2] <- sum(own_ribbon$ydata >=own_ribbon$L2 & own_ribbon$ydata <=own_ribbon$U2)
+inrangeWhite[3] <- sum(!whichOOR3)
+
+
+data.frame(
+  "Predictive interval" = alphas*142,
+  "Out of range" = 142-inrangeWhite
+)
+
+
+
+```
+
+```{r}
+
+ntp_long$ID <- rep(1:142, each = 21)
+ntp_long$mean <- rep(apply(lin_adjust, 1, mean), 142)
+
+
+gghelp <- gg_basic(ntp_long[is.element(ntp_long$ID,which(whichOOR3) ),],
+         aes(x = fpHz, y = NTP, group = ID),
+         ymin = 0, ymax = 70, isl = T, lab = F)+
+  geom_line(aes(color = as.factor(ID)),alpha = 0.5)+
+  geom_point(aes(color = as.factor(ID)), size = 1/2)+
+  geom_line(aes( y= mean, color = "Data mean"))+
+  scale_color_manual(values = c(RavenR::ggplotColours(9), "black" ))+
+  labs(color = "Ceiling")+
+  theme(legend.position = "bottom")
+
+
+
+mahalanobisOutlier1 <- gg_basic(ntp_long[is.element(ntp_long$ID,which(whichOOR3)[1:5]),],
+         aes(x = fpHz, y = NTP, group = ID),
+         ymin = 0, ymax = 70, isl = T, lab = F)+
+  geom_line(aes(color = as.factor(ID)),alpha = 0.5)+
+  geom_point(aes(color = as.factor(ID)), size = 1/2)+
+  geom_line(aes( y= mean, color = "Data mean"))+
+  scale_color_manual(values = c(RavenR::ggplotColours(9)[1:5], "black" ))+
+  labs(color = "Ceiling")
+
+mahalanobisOutlier2 <- gg_basic(ntp_long[is.element(ntp_long$ID,which(whichOOR3)[6:9]),],
+         aes(x = fpHz, y = NTP, group = ID),
+         ymin = 0, ymax = 70, isl = T, lab = F)+
+  geom_line(aes(color = as.factor(ID)),alpha = 0.5)+
+  geom_point(aes(color = as.factor(ID)), size = 1/2)+
+  geom_line(aes( y= mean, color = "Data mean"))+
+  scale_color_manual(values = c(RavenR::ggplotColours(9)[6:9], "black" ))+
+  labs(color = "Ceiling")
+
+
+
+ggarrange(
+  mahalanobisOutlier1, mahalanobisOutlier2,
+  legend = "bottom", legend.grob = get_legend(gghelp)
+)
+
+
+```
+
+
+
+
+
+# Simulated example data
+
+```{r}
+
+createPublicData <- FALSE
+
+if (createPublicData) {
+  set.seed(26)
+
+
+  public_data <- ntp_share
+  public_data[public_data$seltsam_mbbm,] <- NA
+  public_data[,-c(13:33)] <- NA
+  
+  
+  y <- ntp_share[!ntp_share$seltsam_mbbm, 13:33]
+  ycentered <- scale(y, scale = F)
+  
+  ymean <- apply(y, 2, mean)
+  ycov <- resid_to_cov(ycentered, "tvAR", maxlag = 3)
+  
+  
+  
+  public_data[!ntp_share$seltsam_mbbm, 13:33] <- rmvnorm(
+    142, ymean, ycov
+  )
+  
+  
+  write.csv2(public_data, "publicDataISO.csv", row.names = F)
+}
+
+
+
+
+```
+
+
+
+
+
