@@ -28,7 +28,8 @@ transformed data {
   // prioris
   vector[n_beta] mean_beta;
   vector[n_beta] sd_beta;
-
+  
+  // Note: These prior expectations are based on the natural logarithm. 
   mean_beta = [38.64, 4.88, -18.8, -18.8]';
 
 }

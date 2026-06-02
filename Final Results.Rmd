@@ -68,7 +68,7 @@ lnTestDF <- data.frame("fpHz" = freq,
 
 ```{r}
 func_1b <- function(f, b0,b1, b2, bp){
-  b0+b1*log(f) + b2 * pmax(log(f/bp), 0)
+  b0+b1*log10(f) + b2 * pmax(log10(f/bp), 0)
 }
 
 
@@ -242,7 +242,7 @@ Warum 2500 Hz? Bis 1600 Hz sind alle Werte größer als 10 dB. Für 2000 Hz sind
 
 ```{r}
 func_1b <- function(f, b0,b1, b2, bp){
-  b0+b1*log10(f) + b2 * pmax(log(f/bp), 0)
+  b0+b1*log10(f) + b2 * pmax(log10(f/bp), 0)
 }
 
 func_2b <- function(f, b0,b1, b2, b3, bp, bp_diff){
@@ -361,7 +361,7 @@ Am besen ist das TVAR(3) Modell mit drei Segementen
 
 
 $$
- y(f) = \beta_0 + \beta_1 \ln(f) + \beta_{2} \max(\ln(f/\tau_1),0) + \beta_{3} \max(\ln(f/\tau_2),0)
+ y(f) = \beta_0 + \beta_1 \lg(f) + \beta_{2} \max(\lg(f/\tau_1),0) + \beta_{3} \max(\lg(f/\tau_2),0)
 $$
 
 
@@ -394,9 +394,9 @@ bp2 <- 1000
 
 
 x1 <- rep(1, 21)
-x2 <- log(freq)
-x3 <- ifelse(freq > bp1, 1,0) * log(freq/bp1)
-x4 <- ifelse(freq > bp2, 1,0) * log(freq/bp2)
+x2 <- log10(freq)
+x3 <- ifelse(freq > bp1, 1,0) * log10(freq/bp1)
+x4 <- ifelse(freq > bp2, 1,0) * log10(freq/bp2)
 
 X <- cbind(x1,x2,x3,x4)
 
@@ -629,11 +629,16 @@ gg_basic(chiFreqDf,ymin = 0, ymax = 200, sound = F)+
 
 ## Betas
 
+
+Note: In the calculations in STAN, $\ln$ was always used instead of $\lg$!
+Therefore, the corresponding coefficients here must be multiplied by the factor $\ln(10)$
+
 ```{r}
 
 fix_betas <- data.frame(fit3seg$fe_betas)
 names(fix_betas) <- paste("b", 0:3, sep = "")
 
+fix_betas[,2:4] <- log(10)*fix_betas[,2:4]
 
 
 gg_kernel <- ggplot(fix_betas)
